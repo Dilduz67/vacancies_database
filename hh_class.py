@@ -1,67 +1,107 @@
 import requests
 import json
+import psycopg2
 
 
 class HeadHunter():
-    def __init__(self, keyword):
+    def __init__(self, keyword,selected: dict):
         self.__params= {
             "text": keyword,
             "page": 0,
             "per_page":50
-        }
+                        }
+        
+        if len(selected) !=0:
+            self.get_selected=True
+        else:
+            self.get_selected=False
+        
         self.vacancies_url = 'https://api.hh.ru/vacancies'
         self.__vacancies_json = []
         self.vacancies = []
         self.employers = []
-
-    def get_vacancies(self, page_count=1):
-        page=self.__params["page"]
-        while page < page_count:
-            print(f"Страница {page+1}", end=": ")
+        self.selected = {}
+        self.selected=selected
+        
+    def get_response(self,page_count):
+        for page in range(0, page_count):
             response = requests.get(self.vacancies_url, params=self.__params)
             vacancies_list = response.json()["items"]
-            print(f"Найдено {len(vacancies_list)}")
-
+            
             self.__vacancies_json.extend(vacancies_list)
-            page +=1
-            self.__params["page"] = page
+            
+        print(f"Найдено {len(vacancies_list)} вакансий")
+        
+        return
+       
+    def get_vacancies(self, page_count=1):
+        if self.get_selected==False:
+            self.get_response(page_count)
+        else:
+            for id in self.selected:
+                self.__params["employer_id"]=id
+                self.get_response(page_count)
 
         #print(json.dumps(vacancies_list, indent=2, ensure_ascii=False))
         self.get_vacancy_info()
+        
         return
 
     def get_vacancy_info(self):
-        vacancies = []
-        employers = []
+        salary_from:int
+        salary_to:int
+        currency:str
+        
         for item in self.__vacancies_json:
             #берем вакансии только от работодателей с id, т.к. надо вставлять в базу и связывать их друг с другом
             if item["employer"].get("id") != None:
-                employers.append({
+                
+                self.employers.append({
                 "employer_id": item["employer"].get("id"),
                 "firm": item["employer"]["name"],
                 "location": self.get_address(item["address"])
                 })
+                
+                if item["salary"] != None:
+                    salary_from=item["salary"]['from']
+                    salary_to=item["salary"]['to']
+                    currency=item["salary"]['currency']
+                else:
+                    salary_from=None
+                    salary_to=None
+                    currency=None
 
-                vacancies.append({
+                self.vacancies.append({
                     "job_id": item["id"],
                     "employer_id": item["employer"].get("id"),
                     "job_name": item['name'],
                     "job_url":  item['alternate_url'],
                     "requirement": item['snippet']["requirement"],
-                    "salary_from": self.get_salary(item["salary"],'from'),
-                    "salary_to": self.get_salary(item["salary"],"to"),
+                    "salary_from": salary_from,
+                    "salary_to": salary_to,
+                    "currency": currency
                 })
 
-        #удаляем дубликаты работодателей
+        #удаляем дубликаты работодателей и вакансий
         employers1=[]
-        for i in employers:
-            if i not in employers1:
-                employers1.append(i)
+        vacancies1=[]
+        emp_dict = {}
+        vac_dict = {}
+        
+        for i in self.employers:
+            emp_dict[i['employer_id']] = i
+        employers1 = list(emp_dict.values())
 
-        self.vacancies=vacancies
-        self.employers=employers1
-
+        for i in self.vacancies:
+            vac_dict[i['job_id']] = i
+            
+        vacancies1 = list(vac_dict.values())
+        
+        self.employers=employers1        
+        self.vacancies=vacancies1
+        
         return
+    
     def get_salary(self, p_salary,from_to):
         salary  = None
         if p_salary != None:
@@ -74,3 +114,5 @@ class HeadHunter():
             return address["city"]
         else:
             return None
+        
+        
